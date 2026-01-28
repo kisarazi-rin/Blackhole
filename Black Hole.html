@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Black Hole Simulation</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <!-- シェーダーの定義 -->
+    <script id="fs" type="x-shader/x-fragment">
+        precision highp float;
+
+        uniform vec2 u_resolution;
+        uniform float u_time;
+        uniform vec2 u_mouse;
+
+        // --- ノイズ関数 (ガスのゆらぎ用) ---
+        vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+        vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+        float snoise(vec3 v) {
+            const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
+            const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+            vec3 i  = floor(v + dot(v, C.yyy) );
+            vec3 x0 = v - i + dot(i, C.xxx) ;
+            vec3 g = step(x0.yzx, x0.xyz);
+            vec3 l = 1.0 - g;
+            vec3 i1 = min( g.xyz, l.zxy );
+            vec3 i2 = max( g.xyz, l.zxy );
+            vec3 x1 = x0 - i1 + C.xxx;
+            vec3 x2 = x0 - i2 + C.yyy;
+            vec3 x3 = x0 - D.yyy;
+            i = mod289(i);
+            vec4 p = permute( permute( permute(
+                        i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+                    + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
+                    + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+            float n_ = 0.142857142857;
+            vec3  ns = n_ * D.wyz - D.xzx;
+            vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+            vec4 x_ = floor(j * ns.z);
+            vec4 y_ = floor(j - 7.0 * x_ );
+            vec4 x = x_ *ns.x + ns.yyyy;
+            vec4 y = y_ *ns.x + ns.yyyy;
+            vec4 h = 1.0 - abs(x) - abs(y);
+            vec4 b0 = vec4( x.xy, y.xy );
+            vec4 b1 = vec4( x.zw, y.zw );
+            vec4 s0 = floor(b0)*2.0 + 1.0;
+            vec4 s1 = floor(b1)*2.0 + 1.0;
+            vec4 sh = -step(h, vec4(0.0));
+            vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+            vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+            vec3 p0 = vec3(a0.xy,h.x);
+            vec3 p1 = vec3(a0.zw,h.y);
+            vec3 p2 = vec3(a1.xy,h.z);
+            vec3 p3 = vec3(a1.zw,h.w);
+            vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+            p0 *= norm.x;
+            p1 *= norm.y;
+            p2 *= norm.z;
+            p3 *= norm.w;
+            vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+            m = m * m;
+            return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
+        }
+
+        float fbm(vec3 p) {
+            float f = 0.0;
+            float amp = 0.5;
+            for(int i=0; i<4; i++){
+                f += amp * snoise(p);
+                p *= 2.0;
+                amp *= 0.5;
+            }
+            return f;
+        }
+
+        // --- ブラックホールレンダリング設定 ---
+        const float BH_RADIUS = 1.0;     // 事象の地平線の半径
+        const float DISK_INNER = 1.8;    // 降着円盤の内径
+        const float DISK_OUTER = 5.5;    // 降着円盤の外径
+        
+        // 座標回転用
+        mat2 rot(float a) {
+            float s = sin(a), c = cos(a);
+            return mat2(c, -s, s, c);
+        }
+
+        void main() {
+            // UV座標の正規化 (-1.0 ~ 1.0)
+            vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / min(u_resolution.x, u_resolution.y);
+
+            // マウスによるカメラ操作
+            vec2 mo = u_mouse * 2.0 - 1.0;
+            float camDist = 9.0;
+            
+            // カメラの位置とターゲット
+            vec3 ro = vec3(0.0, 0.0, -camDist); // Ray Origin
+            
+            // マウス操作で回転
+            ro.yz *= rot(mo.y * 1.5 + 0.2); // 上下（初期値を少し傾ける）
+            ro.xz *= rot(-mo.x * 2.0);      // 左右
+            
+            vec3 ta = vec3(0.0, 0.0, 0.0); // Target (中心)
+            
+            // カメラ行列の構築
+            vec3 ww = normalize(ta - ro);
+            vec3 uu = normalize(cross(ww, vec3(0.0, 1.0, 0.0)));
+            vec3 vv = normalize(cross(uu, ww));
+            vec3 rd = normalize(uv.x * uu + uv.y * vv + 1.5 * ww); // Ray Direction
+
+            // --- レイトレーシング / レイマーチング ---
+            vec3 col = vec3(0.0);
+            vec3 p = ro;
+            float t = 0.0;
+            
+            // 降着円盤の蓄積カラー
+            vec3 glowCol = vec3(0.0);
+            
+            // 光の曲がりをシミュレートするループ
+            for(int i = 0; i < 150; i++) {
+                float d = length(p);
+                
+                // --- 重力レンズ効果 (簡易計算) ---
+                // 重力源に近いほどレイの方向を内側に曲げる
+                float force = (BH_RADIUS * 1.5) / (d * d); 
+                // レイを曲げる (中心に向かって引っ張る)
+                vec3 acc = normalize(-p) * force * 0.15; 
+                rd += acc;
+                rd = normalize(rd);
+
+                // --- 降着円盤の描画 ---
+                // 円盤はXZ平面 (y=0) にあると仮定
+                // 現在のポイントから円盤平面までの距離と半径をチェック
+                float distToPlane = abs(p.y);
+                float radius = length(p.xz);
+                
+                if (radius > DISK_INNER && radius < DISK_OUTER) {
+                    // 円盤に近い場合、色を加算 (Volumetric Rendering)
+                    float fade = smoothstep(DISK_OUTER, DISK_INNER, radius); // 外側ほど薄く
+                    float density = exp(-distToPlane * 4.0) * 0.15; // 平面から離れると急激に薄くなる
+
+                    if (density > 0.001) {
+                        // ノイズで模様を作る (動かす)
+                        float angle = atan(p.z, p.x);
+                        // 回転速度: 内側ほど速く
+                        float speed = 2.0 / (radius * 0.5); 
+                        vec3 noisePos = vec3(p.x * 1.5, p.z * 1.5, u_time * speed + angle * 2.0);
+                        
+                        float noiseVal = fbm(noisePos);
+                        noiseVal = noiseVal * 0.5 + 0.5; // 0~1へ
+                        
+                        // カラーパレット (オレンジ〜赤〜白)
+                        vec3 diskColor = mix(vec3(1.0, 0.1, 0.0), vec3(1.0, 0.8, 0.3), noiseVal * fade);
+                        diskColor *= density * fade * (noiseVal + 0.2);
+                        
+                        // ドップラー効果風（片側を明るく、片側を暗く）
+                        float doppler = dot(normalize(p.xz), vec2(-1.0, 0.0)); 
+                        // ※簡易的に左側を近づく側、右側を遠ざかる側として明るさを変える
+                        // diskColor *= 1.0 + doppler * 0.4; 
+
+                        glowCol += diskColor;
+                    }
+                }
+
+                // --- ブラックホールの事象の地平線 ---
+                if (d < BH_RADIUS) {
+                    col = vec3(0.0); // 黒
+                    break;
+                }
+                
+                // 背景に抜けた場合
+                if (d > 20.0) {
+                    // 星空などを少し入れてもいいが、今回は漆黒にglowColのみ
+                    break;
+                }
+
+                // レイを進める
+                // 重力が強い場所ではステップを小さくして精度を上げる
+                float stepSize = max(0.05, d * 0.05); 
+                p += rd * stepSize;
+            }
+
+            // 最終的な色
+            col += glowCol;
+            
+            // トーンマッピングとガンマ補正
+            col = pow(col, vec3(0.4545)); // Gamma correction
+            
+            gl_FragColor = vec4(col, 1.0);
+        }
+    </script>
+    
+    <script id="vs" type="x-shader/x-vertex">
+        attribute vec3 position;
+        void main() {
+            gl_Position = vec4(position, 1.0);
+        }
+    </script>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const gl = canvas.getContext('webgl');
+
+        if (!gl) {
+            alert('WebGL not supported');
+        }
+
+        // シェーダーのコンパイル
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        const vsSource = document.getElementById('vs').text;
+        const fsSource = document.getElementById('fs').text;
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vsSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        gl.useProgram(program);
+
+        // フルスクリーンの四角形を描画するためのバッファ
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            -1.0, -1.0,
+             1.0, -1.0,
+            -1.0,  1.0,
+            -1.0,  1.0,
+             1.0, -1.0,
+             1.0,  1.0,
+        ]), gl.STATIC_DRAW);
+
+        const positionLocation = gl.getAttribLocation(program, "position");
+        gl.enableVertexAttribArray(positionLocation);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+        // Uniform変数の場所を取得
+        const timeLocation = gl.getUniformLocation(program, "u_time");
+        const resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+        const mouseLocation = gl.getUniformLocation(program, "u_mouse");
+
+        let mouseX = 0.5;
+        let mouseY = 0.5;
+
+        // マウスイベント
+        canvas.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX / canvas.width;
+            mouseY = e.clientY / canvas.height;
+        });
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        function render(time) {
+            time *= 0.001; // 秒単位に変換
+
+            gl.uniform1f(timeLocation, time);
+            gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+            gl.uniform2f(mouseLocation, mouseX, mouseY);
+
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+            requestAnimationFrame(render);
+        }
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>

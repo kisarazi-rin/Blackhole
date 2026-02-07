@@ -18,6 +18,7 @@
         uniform vec2 u_resolution;
         uniform float u_time;
         uniform vec2 u_mouse;
+        uniform float u_zoom;
 
         // --- ノイズ関数 (ガスのゆらぎ用) ---
         vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -102,7 +103,7 @@
 
             // マウスによるカメラ操作
             vec2 mo = u_mouse * 2.0 - 1.0;
-            float camDist = 9.0;
+            float camDist = u_zoom;
             
             // カメラの位置とターゲット
             vec3 ro = vec3(0.0, 0.0, -camDist); // Ray Origin
@@ -278,6 +279,9 @@
         const timeLocation = gl.getUniformLocation(program, "u_time");
         const resolutionLocation = gl.getUniformLocation(program, "u_resolution");
         const mouseLocation = gl.getUniformLocation(program, "u_mouse");
+        const zoomLocation = gl.getUniformLocation(program, "u_zoom");
+        let zoom = 9.0; // 初期ズーム
+
 
         let mouseX = 0.5;
         let mouseY = 0.5;
@@ -287,6 +291,12 @@
             mouseX = e.clientX / canvas.width;
             mouseY = e.clientY / canvas.height;
         });
+        canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        zoom *= (1.0 + e.deltaY * 0.0015);
+        zoom = Math.min(Math.max(zoom, 3.0), 25.0);
+        }, { passive: false });
+
 
         function resize() {
             canvas.width = window.innerWidth;
@@ -302,6 +312,7 @@
             gl.uniform1f(timeLocation, time);
             gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
             gl.uniform2f(mouseLocation, mouseX, mouseY);
+            gl.uniform1f(zoomLocation, zoom);
 
             gl.drawArrays(gl.TRIANGLES, 0, 6);
 
@@ -311,5 +322,6 @@
     </script>
 </body>
 </html>
+
 
 

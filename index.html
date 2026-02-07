@@ -84,9 +84,11 @@
 
         // --- ブラックホールレンダリング設定 ---
         const float BH_RADIUS = 1.0;     // 事象の地平線の半径
+
+        //降着円盤
         const float DISK_SCALE = 3.0;    // 降着円盤のサイズ
-        const float DISK_INNER = 1.8;    // 降着円盤の内径
-        const float DISK_OUTER = 5.5;    // 降着円盤の外径
+        const float DISK_INNER = 1.8* DISK_SCALE;    // 降着円盤の内径
+        const float DISK_OUTER = 5.5* DISK_SCALE;    // 降着円盤の外径
         
         // 座標回転用
         mat2 rot(float a) {
@@ -132,10 +134,11 @@
                 minD = min(minD, d);
                 
                 // --- 重力レンズ効果 (簡易計算) ---
-                // 重力源に近いほどレイの方向を内側に曲げる
-                float force = (BH_RADIUS * 2.2) / (d * d); 
-                // レイを曲げる (中心に向かって引っ張る)
-                vec3 acc = normalize(-p) * force * 0.25; 
+                // レンズ効果は BH_RADIUS と切り離して調整する（影が膨らまない）
+                const float LENS_STRENGTH = 1.2;   // ここで「ゆがみ」だけ調整
+                float force = (LENS_STRENGTH) / (d * d);
+                vec3 acc = normalize(-p) * force * 0.12;
+ 
                 rd += acc;
                 rd = normalize(rd);
 
@@ -195,7 +198,8 @@
             col += glowCol;
             // --- BH周りのオレンジ色ハロー（ゆがみ/にじみ）---
             // minD が BH_RADIUS に近いほど強く光る。外側まで広がるように調整。
-            float halo = exp(-pow(max(0.0, (minD - BH_RADIUS)) * 0.9, 2.0)); // 広がり大きめ
+            float haloBase = BH_RADIUS * 1.6;
+            float halo = exp(-pow(max(0.0, (minD - haloBase)) * 0.55, 2.0));
             halo *= 0.9;                     // 強さ
             halo = smoothstep(0.0, 1.0, halo);
 
@@ -307,4 +311,5 @@
     </script>
 </body>
 </html>
+
 
